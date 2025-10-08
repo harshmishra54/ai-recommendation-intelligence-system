@@ -34,15 +34,24 @@ function adjustDosage(dosage, area) {
 function adjustWaterVolume(volume, area) {
   if (!volume) return null;
 
-  const match = volume.toString().match(/([\d.]+)/);
-  if (!match) return volume;
+  const str = volume.toString().trim();
+
+  // Extract numeric part
+  const match = str.match(/([\d.]+)/);
+  if (!match) return str;
 
   const value = parseFloat(match[1]);
-  if (isNaN(value)) return volume;
+  if (isNaN(value)) return str;
 
   const multiplied = value * parseFloat(area);
-  return volume.toString().replace(match[1], multiplied);
+
+  // Check if original string has any letters (unit)
+  const unitMatch = str.match(/[a-zA-Z%]+/);
+  const unit = unitMatch ? unitMatch[0] : 'L'; // default to liters if none
+
+  return `${multiplied} ${unit}`.trim();
 }
+
 
 
 // Compute intelligent score
