@@ -16,23 +16,34 @@ const fuseOptions = {
 // Helper: adjust dosage based on area, keeping units
 function adjustDosage(dosage, area) {
   if (!dosage) return null;
-  const match = dosage.toString().match(/^([\d.]+)\s*(\w*)$/);
-  if (!match) return dosage;
+
+  // Try to extract first numeric part
+  const match = dosage.toString().match(/([\d.]+)/);
+  if (!match) return dosage; // fallback if no number found
+
   const value = parseFloat(match[1]);
-  const unit = match[2] || '';
   if (isNaN(value)) return dosage;
-  return `${value * parseFloat(area)} ${unit}`.trim();
+
+  // Multiply numeric value by area
+  const multiplied = value * parseFloat(area);
+
+  // Preserve full original string but replace first number with multiplied
+  return dosage.toString().replace(match[1], multiplied);
 }
 
-// Helper: adjust water volume based on area, keeping units
 function adjustWaterVolume(volume, area) {
   if (!volume) return null;
-  const match = volume.toString().match(/^([\d.]+)\s*(\w*)$/);
+
+  const match = volume.toString().match(/([\d.]+)/);
   if (!match) return volume;
+
   const value = parseFloat(match[1]);
-  const unit = match[2] || '';
-  return `${value * parseFloat(area)} ${unit}`.trim();
+  if (isNaN(value)) return volume;
+
+  const multiplied = value * parseFloat(area);
+  return volume.toString().replace(match[1], multiplied);
 }
+
 
 // Compute intelligent score
 function computeScore(item, cd, farmer, currentProducts) {
