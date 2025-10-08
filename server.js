@@ -1,146 +1,233 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const Fuse = require('fuse.js');
-const products = require('./products_detailed.json');
+const fs = require('fs');
+
+const knowledgeBase = JSON.parse(fs.readFileSync('knowledge_base_atlas.json'));
+const products = JSON.parse(fs.readFileSync('products_detailed.json'));
 
 const app = express();
 app.use(bodyParser.json());
 
 // Fuse.js options
 const fuseOptions = {
-  keys: ['cropDiseases.crop', 'cropDiseases.disease', 'productFeatures'],
-  threshold: 0.6, // higher threshold for more flexible matching
-  ignoreLocation: true,
+  keys: ["crop", "conditions.problem", "conditions.symptoms", "conditions.advice"],
+  threshold: 0.35,
+  ignoreLocation: true
 };
 
-// Helper: adjust dosage based on area, keeping units
+// Helpers
 function adjustDosage(dosage, area) {
-  if (!dosage) return null;
+  if (!dosage || !area) return dosage;
   const match = dosage.toString().match(/([\d.]+)/);
   if (!match) return dosage;
-  const value = parseFloat(match[1]);
-  if (isNaN(value)) return dosage;
-  const multiplied = value * parseFloat(area);
-  return dosage.toString().replace(match[1], multiplied);
+  return dosage.toString().replace(match[1], parseFloat(match[1]) * parseFloat(area));
 }
 
 function adjustWaterVolume(volume, area) {
-  if (!volume) return null;
-  const str = volume.toString().trim();
-  const match = str.match(/([\d.]+)/);
-  if (!match) return str;
-  const value = parseFloat(match[1]);
-  if (isNaN(value)) return str;
-  const multiplied = value * parseFloat(area);
-  const unitMatch = str.match(/[a-zA-Z%]+/);
+  if (!volume || !area) return volume;
+  const match = volume.toString().match(/([\d.]+)/);
+  if (!match) return volume;
+  const unitMatch = volume.toString().match(/[a-zA-Z%]+/);
   const unit = unitMatch ? unitMatch[0] : 'L';
-  return `${multiplied} ${unit}`.trim();
+  return `${parseFloat(match[1]) * parseFloat(area)} ${unit}`;
 }
 
-// Compute intelligent score for each product
-function computeScore(item, cd, farmer, currentProducts) {
+function computeScore(item, cropProblem, farmer, currentProducts) {
   let score = 0;
-
-  // Season match
-  if (item.seasons && item.seasons.includes(farmer.season)) score += 30;
-
-  // Crop match (always required)
-  if (cd.crop.toLowerCase().includes(farmer.crop.toLowerCase())) score += 30;
-
-  // Disease match is optional
-  if (farmer.disease && farmer.disease.toLowerCase() !== 'na') {
-    if (cd.disease.toLowerCase().includes(farmer.disease.toLowerCase())) score += 20;
-  }
-
-  // Multi-disease bonus
-  if (cd.disease.split(',').length > 1) score += 5;
-
-  // Product features for productivity
-  if (item.productFeatures) {
-    const features = item.productFeatures.map(f => f.toLowerCase());
-    if (features.includes('growth') || features.includes('yield') || features.includes('fertilizer') || features.includes('nutrition')) {
-      score += 25; // high weight for productivity
-    }
-  }
-
-  // Penalize already using product slightly
-  const alreadyUsing = currentProducts
-    ? currentProducts.some(p => item.name.toLowerCase().includes(p.toLowerCase()))
-    : false;
+  if (item.seasons?.includes(farmer.season)) score += 30;
+  if ((cropProblem.crop || '').toLowerCase() === (farmer.crop || '').toLowerCase()) score += 30;
+  if ((cropProblem.problem || '').toLowerCase() === (farmer.problem || '').toLowerCase()) score += 20;
+  if ((cropProblem.problem || '').split(',').length > 1) score += 5;
+  if (item.productFeatures?.some(f => ["growth","yield","fertilizer","nutrition"].includes(f.toLowerCase()))) score += 25;
+  const alreadyUsing = currentProducts?.some(p => item.name.toLowerCase().includes(p.toLowerCase())) || false;
   if (!alreadyUsing) score += 5;
-
   return { score, alreadyUsing };
 }
 
 // Health check
 app.get('/', (req, res) => {
-  res.json({
-    status: '✅ Smart AI Recommendation Server is running!',
-    message: 'POST /recommend with farmer details to get recommendations.',
-  });
+  res.json({ status: '✅ Server running', message: 'POST /recommend with query & farmer info' });
 });
 
 // Recommendation endpoint
 app.post('/recommend', (req, res) => {
-  const { farmer, crops } = req.body;
+  const { query = '', farmer = {}, currentProducts = [] } = req.body;
+  const q = query.trim().toLowerCase();
 
-  if (!farmer || !farmer.area || !farmer.season || !crops || !Array.isArray(crops)) {
-    return res.status(400).json({ error: 'Farmer info and crops array are required' });
+  // 🌱 1️⃣ Small talk / chat responses
+  const greetings = ["hi", "hello", "hey", "good morning", "good evening"];
+  const gratitude = ["thanks", "thank you"];
+  const who = ["who are you", "who made you", "what are you"];
+  const help = ["help", "what can you do", "how to use"];
+  const aboutProducts = ["what products", "show products", "list products", "available products"];
+  const cropsQuery = ["what crops", "supported crops", "show crops", "which crops"];
+  const dosageQuery = ["what is dosage", "dosage meaning", "explain dosage"];
+  const waterVolumeQuery = ["what is water volume", "explain water volume", "meaning of water volume"];
+  const companyQuery = ["who owns you", "parijat", "company info", "tell about company"];
+
+  // ---- Chat Handling ----
+  if (greetings.some(g => q === g)) {
+    return res.json({
+      query,
+      message: "👋 Hello! I’m your Agri Assistant. Please tell me your crop and problem — for example, 'rice blast' or 'tomato leaf curl'.",
+      recommendations: []
+    });
   }
 
+  if (gratitude.some(g => q.includes(g))) {
+    return res.json({
+      query,
+      message: "😊 You’re most welcome! I'm here to assist you with crop protection and product recommendations.",
+      recommendations: []
+    });
+  }
+
+  if (who.some(w => q.includes(w))) {
+    return res.json({
+      query,
+      message: "🤖 I’m your AI-powered Agriculture Advisor, developed to recommend Parijat Agrochemical products based on your crop and disease.",
+      recommendations: []
+    });
+  }
+
+  if (help.some(h => q.includes(h))) {
+    return res.json({
+      query,
+      message:
+        "🧭 You can ask things like:\n- 'Suggest product for wheat rust'\n- 'Rice blast treatment'\n- 'What is dosage?'\n- 'Show supported crops'",
+      recommendations: []
+    });
+  }
+
+  if (aboutProducts.some(a => q.includes(a))) {
+    const allProducts = products.slice(0, 10).map(p => p.name);
+    return res.json({
+      query,
+      message: `🧴 Here are some of our top products:\n${allProducts.join(", ")}\n\nYou can ask like 'Recommend for cotton bollworm' for specific help.`,
+      recommendations: []
+    });
+  }
+
+  if (cropsQuery.some(c => q.includes(c))) {
+    const uniqueCrops = [
+      ...new Set(products.flatMap(p => p.cropDiseases?.map(cd => cd.crop) || []))
+    ].slice(0, 20);
+    return res.json({
+      query,
+      message: `🌾 Supported crops include: ${uniqueCrops.join(", ")}.\n\nYou can ask like 'suggest for ${uniqueCrops[0]} disease'.`,
+      recommendations: []
+    });
+  }
+
+  if (dosageQuery.some(d => q.includes(d))) {
+    return res.json({
+      query,
+      message:
+        "💧 'Dosage' means the amount of product to use for a given area. For example, '500 ml per acre' means you should use 500 milliliters of the product for each acre of your field.",
+      recommendations: []
+    });
+  }
+
+  if (waterVolumeQuery.some(w => q.includes(w))) {
+    return res.json({
+      query,
+      message:
+        "🚿 'Water volume' means the amount of water needed to spray the chemical effectively. Example: '500 liters per acre' means mix the product in 500 liters of water for 1 acre area.",
+      recommendations: []
+    });
+  }
+
+  if (companyQuery.some(c => q.includes(c))) {
+    return res.json({
+      query,
+      message:
+        "🏢 Parijat Industries is one of India's leading agrochemical companies, providing crop protection solutions for Indian farmers since 1995. Learn more at https://parijat.in/",
+      recommendations: []
+    });
+  }
+
+  // 🌾 2️⃣ Recommendation Flow
+  if (!query && !farmer.crop && !farmer.problem) {
+    return res.json({
+      message: "🪴 Please tell me your crop and problem, e.g. 'potato late blight' or 'wheat rust'.",
+      recommendations: []
+    });
+  }
+
+  // Search in knowledge base
+  const fuse = new Fuse(knowledgeBase, fuseOptions);
+  const searchResults = query ? fuse.search(query) : [];
+  const bestMatch = searchResults.length
+    ? searchResults[0].item
+    : { crop: farmer.crop || '', conditions: [{ problem: farmer.problem || '', advice: '' }] };
+
+  let condition = bestMatch.conditions?.[0] || {};
+  if (bestMatch && query) {
+    const conditionFuse = new Fuse(bestMatch.conditions, { keys: ['problem', 'symptoms', 'advice'], threshold: 0.35 });
+    const conditionResult = conditionFuse.search(query);
+    if (conditionResult.length) condition = conditionResult[0].item;
+  }
+
+  const cropToUse = bestMatch.crop || farmer.crop || '';
+  const problemToUse = condition.problem || farmer.problem || '';
+
   const recommendations = [];
-  const fuse = new Fuse(products, fuseOptions);
-
-  crops.forEach(cropItem => {
-    const { name: crop, disease, currentProducts = [] } = cropItem;
-
-    // Search by crop only first
-    let searchResults = fuse.search(crop).map(r => r.item);
-
-    // Filter by disease only if provided
-    if (disease && disease.toLowerCase() !== 'na') {
-      searchResults = searchResults.filter(item =>
-        item.cropDiseases.some(cd =>
-          cd.disease.toLowerCase().includes(disease.toLowerCase())
-        )
-      );
-    }
-
-    searchResults.forEach(item => {
-      item.cropDiseases.forEach(cd => {
-        const cropMatch = cd.crop.toLowerCase().includes(crop.toLowerCase());
-        if (cropMatch) {
-          const { score, alreadyUsing } = computeScore(item, cd, { ...farmer, crop, disease }, currentProducts);
-
-          recommendations.push({
-            name: item.name,
-            crop: cd.crop,
-            disease: cd.disease,
-            dosage: adjustDosage(cd.dosage, farmer.area),
-            waterVolume: adjustWaterVolume(cd.waterVolume, farmer.area),
-            season: farmer.season,
-            area: farmer.area + " acres",
-            alreadyUsing,
-            directionsOfUse: item.directionsOfUse || 'Follow label instructions',
-            product_url: item.product_url,
-            image: item.image,
-            features: item.productFeatures || [],
-            reason: alreadyUsing
-              ? `Farmer is already using this product. Consider alternatives for better productivity.`
-              : `Recommended to improve ${crop} productivity and manage ${disease || 'general crop health'} during ${farmer.season}.`,
-            score
-          });
-        }
-      });
+  products.forEach(item => {
+    item.cropDiseases?.forEach(cd => {
+      const cropMatch =
+        cd.crop.toLowerCase().includes(cropToUse.toLowerCase()) ||
+        cropToUse.toLowerCase().includes(cd.crop.toLowerCase());
+      const diseaseMatch =
+        cd.disease.toLowerCase().includes(problemToUse.toLowerCase()) ||
+        problemToUse.toLowerCase().includes(cd.disease.toLowerCase());
+      if (cropMatch && diseaseMatch) {
+        const { score, alreadyUsing } = computeScore(item, { crop: cd.crop, problem: cd.disease }, farmer, currentProducts);
+        recommendations.push({
+          name: item.name,
+          crop: cd.crop,
+          disease: cd.disease,
+          dosage: adjustDosage(cd.dosage, farmer.area || 1),
+          waterVolume: adjustWaterVolume(cd.waterVolume, farmer.area || 1),
+          season: farmer.season || 'Unknown',
+          area: (farmer.area || 1) + ' acres',
+          alreadyUsing,
+          directionsOfUse: item.directionsOfUse || 'Follow label instructions',
+          product_url: item.product_url,
+          image: item.image,
+          features: item.productFeatures || [],
+          advice: condition.advice || 'Follow best agricultural practices',
+          score
+        });
+      }
     });
   });
 
-  // Sort and return top 5 recommendations
   recommendations.sort((a, b) => b.score - a.score);
-  res.json({ recommendations: recommendations.slice(0, 5) });
+
+  // 🧠 Fallback
+  if (recommendations.length === 0) {
+    return res.json({
+      query,
+      message:
+        `🤔 I couldn’t find a specific product for "${query}". Please try again with crop and problem, like 'wheat rust' or 'paddy blast'.`,
+      recommendations: []
+    });
+  }
+
+  // ✅ Final Response
+  res.json({
+    query,
+    interpretation: {
+      crop: cropToUse || 'Unknown',
+      problem: problemToUse || 'Unknown',
+      advice: condition.advice || 'Follow best practices'
+    },
+    recommendations: recommendations.slice(0, 5)
+  });
 });
 
+
+// Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Smart AI recommendation server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
