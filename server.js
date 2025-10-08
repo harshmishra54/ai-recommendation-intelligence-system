@@ -35,8 +35,6 @@ function computeScore(item, cd, farmer, currentProducts) {
   // Multi-disease coverage bonus
   if (cd.disease.split(',').length > 1) score += 5;
 
-  // Priority 4: area (for dosage only, does not affect score directly)
-
   // Optional intelligence: product already used (small tie-breaker)
   const alreadyUsing = currentProducts
     ? currentProducts.some(p => item.name.toLowerCase().includes(p.toLowerCase()))
@@ -46,7 +44,15 @@ function computeScore(item, cd, farmer, currentProducts) {
   return { score, alreadyUsing };
 }
 
-// Recommendation endpoint
+// 🩺 Root endpoint (for health check or browser visit)
+app.get('/', (req, res) => {
+  res.json({
+    status: '✅ Smart AI Recommendation Server is running!',
+    message: 'Use POST /recommend to get crop protection recommendations.',
+  });
+});
+
+// 🌾 Recommendation endpoint
 app.post('/recommend', (req, res) => {
   const { farmer, crops } = req.body;
 
@@ -95,12 +101,14 @@ app.post('/recommend', (req, res) => {
   // Sort by score descending → highest priority products first
   recommendations.sort((a, b) => b.score - a.score);
 
-  // Optional: return top 3 or 5 only for clarity
+  // Optional: return top 5
   const topRecommendations = recommendations.slice(0, 5);
 
   res.json({ recommendations: topRecommendations });
 });
 
-app.listen(3000, () => {
-  console.log('Smart AI recommendation server running on http://localhost:3000');
+// ✅ Use Render’s dynamic port
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Smart AI recommendation server running on http://localhost:${PORT}`);
 });

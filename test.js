@@ -2,25 +2,28 @@ const axios = require('axios');
 
 async function testRecommendation() {
   try {
-    const response = await axios.post('http://localhost:3000/recommend', {
-      farmer: {
-        name: 'Rajiv',
-        season: 'Kharif',   // Season of cropping
-        area: 2             // Area in acres
-      },
-      crops: [
-        {
-          name: 'Rice',
-          disease: 'Blast',
-          currentProducts: ['Indazole'] // Products farmer is already using
+    const response = await axios.post(
+      'https://ai-recommendation-intelligence-system.onrender.com/recommend', // <-- add /recommend
+      {
+        farmer: {
+          name: 'Rajiv',
+          season: 'Kharif',
+          area: 2
         },
-        {
-          name: 'Grapes',
-          disease: 'Downey mildew',
-          currentProducts: [] // Not using anything yet
-        }
-      ]
-    });
+        crops: [
+          {
+            name: 'Rice',
+            disease: 'Blast',
+            currentProducts: ['Indazole']
+          },
+          {
+            name: 'Grapes',
+            disease: 'Downey mildew',
+            currentProducts: []
+          }
+        ]
+      }
+    );
 
     console.log('=== Smart AI Recommendations ===');
     console.log(JSON.stringify(response.data, null, 2));
