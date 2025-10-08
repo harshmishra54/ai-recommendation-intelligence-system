@@ -9,67 +9,61 @@ app.use(bodyParser.json());
 // Fuse.js options
 const fuseOptions = {
   keys: ['cropDiseases.crop', 'cropDiseases.disease', 'productFeatures'],
-  threshold: 0.4,
+  threshold: 0.6, // higher threshold for more flexible matching
   ignoreLocation: true,
 };
 
 // Helper: adjust dosage based on area, keeping units
 function adjustDosage(dosage, area) {
   if (!dosage) return null;
-
-  // Try to extract first numeric part
   const match = dosage.toString().match(/([\d.]+)/);
-  if (!match) return dosage; // fallback if no number found
-
+  if (!match) return dosage;
   const value = parseFloat(match[1]);
   if (isNaN(value)) return dosage;
-
-  // Multiply numeric value by area
   const multiplied = value * parseFloat(area);
-
-  // Preserve full original string but replace first number with multiplied
   return dosage.toString().replace(match[1], multiplied);
 }
 
 function adjustWaterVolume(volume, area) {
   if (!volume) return null;
-
   const str = volume.toString().trim();
-
-  // Extract numeric part
   const match = str.match(/([\d.]+)/);
   if (!match) return str;
-
   const value = parseFloat(match[1]);
   if (isNaN(value)) return str;
-
   const multiplied = value * parseFloat(area);
-
-  // Check if original string has any letters (unit)
   const unitMatch = str.match(/[a-zA-Z%]+/);
-  const unit = unitMatch ? unitMatch[0] : 'L'; // default to liters if none
-
+  const unit = unitMatch ? unitMatch[0] : 'L';
   return `${multiplied} ${unit}`.trim();
 }
 
-
-
-// Compute intelligent score
+// Compute intelligent score for each product
 function computeScore(item, cd, farmer, currentProducts) {
   let score = 0;
 
-  if (item.seasons && item.seasons.includes(farmer.season)) score += 40;
-  if (cd.crop.toLowerCase() === farmer.crop.toLowerCase()) score += 30;
-  if (farmer.disease && cd.disease.toLowerCase().includes(farmer.disease.toLowerCase())) score += 20;
+  // Season match
+  if (item.seasons && item.seasons.includes(farmer.season)) score += 30;
+
+  // Crop match (always required)
+  if (cd.crop.toLowerCase().includes(farmer.crop.toLowerCase())) score += 30;
+
+  // Disease match is optional
+  if (farmer.disease && farmer.disease.toLowerCase() !== 'na') {
+    if (cd.disease.toLowerCase().includes(farmer.disease.toLowerCase())) score += 20;
+  }
+
+  // Multi-disease bonus
   if (cd.disease.split(',').length > 1) score += 5;
 
+  // Product features for productivity
   if (item.productFeatures) {
     const features = item.productFeatures.map(f => f.toLowerCase());
-    if (features.includes('growth') || features.includes('yield') || features.includes('fertilizer')) {
-      score += 15;
+    if (features.includes('growth') || features.includes('yield') || features.includes('fertilizer') || features.includes('nutrition')) {
+      score += 25; // high weight for productivity
     }
   }
 
+  // Penalize already using product slightly
   const alreadyUsing = currentProducts
     ? currentProducts.some(p => item.name.toLowerCase().includes(p.toLowerCase()))
     : false;
@@ -100,19 +94,22 @@ app.post('/recommend', (req, res) => {
   crops.forEach(cropItem => {
     const { name: crop, disease, currentProducts = [] } = cropItem;
 
-    const query = `${crop} ${disease || ''}`.toLowerCase();
-    let searchResults = fuse.search(query).map(r => r.item);
+    // Search by crop only first
+    let searchResults = fuse.search(crop).map(r => r.item);
 
-    if (searchResults.length === 0) {
-      searchResults = fuse.search(crop.toLowerCase()).map(r => r.item);
+    // Filter by disease only if provided
+    if (disease && disease.toLowerCase() !== 'na') {
+      searchResults = searchResults.filter(item =>
+        item.cropDiseases.some(cd =>
+          cd.disease.toLowerCase().includes(disease.toLowerCase())
+        )
+      );
     }
 
     searchResults.forEach(item => {
       item.cropDiseases.forEach(cd => {
         const cropMatch = cd.crop.toLowerCase().includes(crop.toLowerCase());
-        const diseaseMatch = disease ? cd.disease.toLowerCase().includes(disease.toLowerCase()) : true;
-
-        if (cropMatch && diseaseMatch) {
+        if (cropMatch) {
           const { score, alreadyUsing } = computeScore(item, cd, { ...farmer, crop, disease }, currentProducts);
 
           recommendations.push({
@@ -130,7 +127,7 @@ app.post('/recommend', (req, res) => {
             features: item.productFeatures || [],
             reason: alreadyUsing
               ? `Farmer is already using this product. Consider alternatives for better productivity.`
-              : `Recommended to improve ${farmer.crop} productivity and manage ${disease || 'general crop health'} during ${farmer.season}.`,
+              : `Recommended to improve ${crop} productivity and manage ${disease || 'general crop health'} during ${farmer.season}.`,
             score
           });
         }
@@ -138,6 +135,7 @@ app.post('/recommend', (req, res) => {
     });
   });
 
+  // Sort and return top 5 recommendations
   recommendations.sort((a, b) => b.score - a.score);
   res.json({ recommendations: recommendations.slice(0, 5) });
 });
